@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>DiskReport</title>
+	<meta charset="UTF-8">
+	<style>
+		.background {
+			fill: none;
+			stroke: lightgray;
+		}
+
+		.foreground {
+			fill: none;
+			stroke: steelblue;
+		}
+	</style>
+</head>
+<body>
+</body>
+<script src="https://d3js.org/d3.v5.min.js"></script>
+<script type="text/javascript">
+
+'use strict';
+
+var svg = [
+	d3.select("body").append("svg")
+		.attr("width", 960)
+		.attr("height", 540),
+	d3.select("body").append("svg")
+		.attr("width", 960)
+		.attr("height", 540)
+];
+
+var fader = function(color){ return d3.interpolateRgb(color, "#fff")(0.2); };
+var color = d3.scaleOrdinal(d3.schemeCategory10.map(fader));
+var format = d3.format(",d");
+
+d3.json("data.json").then(function(data){
+	var treemap = d3.treemap()
+		.tile(d3.treemapResquarify)
+		.size([svg[0].attr("width"), svg[0].attr("height")])
+		.round(true)
+		.paddingInner(1);
+
+	var flattenData = [];
+
+	var root = d3.hierarchy(data, function(d){ return d.files; })
+		.eachBefore(function(d){ flattenData.push(d); })
+		.sum(function(d){ return d.size; })
+		.sort(function(a, b){ return b.size - a.size });
+
+	treemap(root);
+
+	var cell = svg[0].selectAll("g")
+		.data(root.leaves())
+		.enter().append("g")
+			.attr("transform", function(d){ return "translate(" + d.x0 + "," + d.y0 + ")" });
+
+	cell.append("rect")
+		.attr("width", function(d){ return d.x1 - d.x0 })
+		.attr("height", function(d){ return d.y1 - d.y0 })
+		.attr("fill", function(d){ return color(d.parent.data.type); })
+		.style("opacity", 0.8);
+
+	cell.append("text")
+		.attr("x", 4)
+		.attr("y", 13)
+		.attr("font-size", "0.7em")
+		.text(function(d){ return d.data.name; });
+
+	/**
+	 * Parallel Coordinates
+	 */
+	var margin = {top: 50, right: 20, bottom: 20, left: 60};
+	svg[1].g = svg[1].append("g")
+		.attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+	var width = +svg[1].attr("width") - margin.left - margin.right;
+	var height = +svg[1].attr("height") - margin.top - margin.bottom;
+
+	console.log(width, height);
+
+	flattenData = flattenData.filter(function(d){
+		return d.data.size; // filter directory
+	}).map(function(d){ return {
+		size: d.data.size,
+		atime: d.data.atime,
+		mtime: d.data.mtime,
+		ctime: d.data.ctime,
+		birthtime: d.data.birthtime
+	}; });
+
+	var dimensions = d3.keys(flattenData[0]);
+
+	var x = d3.scaleBand()
+		.domain(dimensions)
+		.range([0, width]);
+	var y = {};
+	dimensions.forEach(function(d){
+		y[d] = d3.scaleLinear()
+			.domain(d3.extent(flattenData, function(p){ return p[d]; }))
+			.range([height, 0]);
+	});
+
+	dimensions.forEach(function(d){ console.log(d, x(d)); })
+
+	var line = d3.line();
+	var path = function(d){
+		return line(dimensions.map(function(p){ return [x(p), y[p](d[p])]; }));
+	};
+	var axis = d3.axisLeft();
+
+	var background = svg[1].g.append("g")
+			.attr("class", "background")
+		.selectAll("path")
+			.data(flattenData)
+		.enter().append("path")
+			.attr("d", path);
+
+	var foreground = svg[1].g.append("g")
+			.attr("class", "foreground")
+		.selectAll("path")
+			.data(flattenData)
+		.enter().append("path")
+			.attr("d", path);
+
+	var g = svg[1].g.selectAll(".dimension")
+			.data(dimensions)
+		.enter().append("g")
+			.attr("class", "dimension")
+			.attr("transform", function(d){ return "translate(" + x(d) + ")"; });
+
+	g.append("g")
+			.attr("class", "axis")
+			.each(function(d){ d3.select(this).call(axis.scale(y[d])); })
+		.append("text")
+			.style("text-anchor", "middle")
+			.style("font-size", "1.5em")
+			.attr("fill", "black")
+			.attr("y", -9)
+			.text(function(d){ return d; });
+
+	var brush = function(p){
+		return function(){
+			y[p].selection = d3.event.selection;
+			var actives = dimensions.filter(function(p){ return y[p].selection; });
+			foreground.style("display", function(d){
+				return actives.every(function(p, i){
+					return y[p].selection[0] <= y[p](d[p]) && y[p](d[p]) <= y[p].selection[1];
+				}) ? null : "none";
+			});
+		};
+	};
+
+	g.append("g")
+			.attr("class", "brush")
+			.each(function(d){ d3.select(this).call(y[d].brush = d3.brushY().extent([[-8, 0], [8, height]]).on("brush", brush(d))); });
+
+});
+
+</script>
+</html>

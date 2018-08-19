@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>DiskReport</title>
+	<meta charset="UTF-8">
+	<style>
+		.background {
+			fill: none;
+			stroke: lightgray;
+		}
+
+		.foreground {
+			fill: none;
+			stroke: steelblue;
+		}
+
+		text {
+			pointer-events: none;
+		}
+
+		.grandparent text {
+			font-weight: bold;
+		}
+
+		rect.parent,
+		.grandparent rect {
+			stroke-width: 2px;
+		}
+
+		rect.parent {
+			pointer-events: none;
+		}
+
+		.grandparent rect {
+			fill: orange;
+		}
+
+		.grandparent:hover rect {
+			fill: #ee9700;
+		}
+
+		.children rect.parent,
+		.grandparent rect{
+			cursor: pointer;
+		}
+
+		.children rect.parent {
+			fill: #bbb;
+			fill-opacity: 1;
+		}
+
+		.children:hover rect.child {
+			fill: #bbb;
+		}
+	</style>
+</head>
+<body>
+</body>
+<script src="https://d3js.org/d3.v5.min.js"></script>
+<script type="text/javascript">
+
+'use strict';
+
+var width = 960;
+var height = 540;
+var margin = {top: 24, right: 0, bottom: 0, left: 0};
+
+var x = d3.scaleLinear()
+	.domain([0, width])
+	.range([0, width]);
+
+var y = d3.scaleLinear()
+	.domain([0, height])
+	.range([0, height]);
+
+var svg = d3.select("body").append("svg")
+	.attr("width", width)
+	.attr("height", height);
+
+var g = svg.append("g")
+	.attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+var treemap = d3.treemap()
+	.tile(d3.treemapResquarify)
+	.size([width, height - margin.top])
+	.round(true)
+	.paddingInner(1);
+
+var grandparent = svg.append("g")
+	.attr("class", "grandparent");
+
+grandparent.append("rect")
+	.attr("width", width)
+	.attr("height", margin.top);
+
+grandparent.append("text")
+	.attr("x", 6)
+	.attr("y", 6)
+	.attr("dy", ".75em");
+
+var fader = function(color){ return d3.interpolateRgb(color, "#fff")(0.2); };
+var color = d3.scaleOrdinal(d3.schemeCategory10.map(fader));
+
+
+
+d3.json("data.json").then(function(data){
+	var root = d3.hierarchy(data, function(d){ return d.files; })
+		.sum(function(d){ return Math.sqrt(d.size + 1024); })
+		.sort(function(a, b){ return b.size - a.size });
+
+	treemap(root);
+
+	accumulate(root);
+	console.log(root);
+	display(root);
+});
+
+
+
+function rect(rect){
+	rect.attr("x", function(d){ return x(d.x0); })
+		.attr("y", function(d){ return y(d.y0); })
+		.attr("width", function(d){ return x(d.x1) - x(d.x0); })
+		.attr("height", function(d){ return y(d.y1) - y(d.y0); });
+}
+
+function name(d){
+	return d.parent
+		? name(d.parent) + "/" + d.data.name
+		: d.data.name;
+}
+
+function fileSizeFormat(bytes, si = true) {
+    var thresh = si ? 1000 : 1024;
+    if(Math.abs(bytes) < thresh) {
+        return bytes + ' B';
+    }
+    var units = si
+        ? ['KB','MB','GB','TB','PB','EB','ZB','YB']
+        : ['KiB','MiB','GiB','TiB','PiB','EiB','ZiB','YiB'];
+    var u = -1;
+    do {
+        bytes /= thresh;
+        ++u;
+    } while(Math.abs(bytes) >= thresh && u < units.length - 1);
+    return bytes.toFixed(1)+' '+units[u];
+}
+
+function text(text){
+	text.selectAll("tspan")
+		.attr("x", function(d){ return x(d.x0) + 6; });
+	text.attr("x", function(d){ return x(d.x0) + 6; })
+		.attr("y", function(d){ return y(d.y0) + 6; })
+		.style("opacity", function(d){ return this.getComputedTextLength() < x(d.x1) - x(d.x0) ? 1 : 0; });
+}
+
+function text2(text){
+	text.attr("x", function(d){ return x(d.x1) - this.getComputedTextLength() - 6; })
+		.attr("y", function(d){ return y(d.y1) - 6; })
+		.style("opacity", function(d){ return this.getComputedTextLength() < x(d.x1) - x(d.x0) ? 1 : 0; });
+}
+
+function accumulate(d){
+	return d.children
+		? d.data.size = d.children.reduce(function(p, v){ return p + accumulate(v); }, 0)
+		: d.data.size;
+}
+
+function display(d){
+	grandparent
+		.datum(d.parent)
+		.on("click", transition)
+	.select("text")
+		.text(name(d));
+
+	var g1 = g.insert("g", ".grandparent")
+		.datum(d)
+		.attr("class", "depth");
+
+	console.log(d);
+
+	var g2 = g1.selectAll("g")
+		.data(d.children)
+	.enter().append("g");
+
+	g2.filter(function(d){ return d.children; })
+		.classed("children", true)
+		.on("click", transition);
+
+	var children = g2.selectAll(".child")
+		.data(function(d){ return d.children || [d]; })
+	.enter().append("g");
+
+	children.append("rect")
+		.attr("class", "child")
+		.call(rect)
+	.append("title")
+		.text(function(d){ return d.data.fullname; });
+
+	children.append("text")
+		.attr("class", "ctext")
+		.text(function(d){ return d.data.fullname; })
+		.call(text2);
+
+	g2.append("rect")
+		.attr("class", "parent")
+		.call(rect);
+
+	var t = g2.append("text")
+		.attr("class", "ptext")
+		.attr("dy", ".75em");
+
+	t.append("tspan")
+		.text(function(d){ return d.data.name; });
+	t.append("tspan")
+		.attr("dy", "1.0em")
+		.text(function(d){ return d.data.size ? fileSizeFormat(d.data.size) : ""; });
+	t.call(text);
+
+	g2.selectAll("rect")
+		.style("fill", function(d){ return color(d.data.type); });
+
+	function transition(d){
+		var g3 = display(d);
+
+		var t1 = g1.transition();
+		var t3 = g3.transition();
+
+		x.domain([d.x0, d.x1]);
+		y.domain([d.y0, d.y1]);
+
+		g3.selectAll(".depth").sort(function(a, b){ return a.depth - b.depth; });
+
+		g3.selectAll("text").style("fill-opacity", 0);
+
+		t1.selectAll(".ptext").call(text).style("fill-opacity", 0);
+		t1.selectAll(".ctext").call(text2).style("fill-opacity", 0);
+		t3.selectAll(".ptext").call(text).style("fill-opacity", 1);
+		t3.selectAll(".ctext").call(text2).style("fill-opacity", 1);
+		t1.selectAll("rect").call(rect);
+		t3.selectAll("rect").call(rect);
+
+		t1.remove();
+	}
+
+	return g2;
+}
+
+</script>
+</html>
